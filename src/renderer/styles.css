@@ -378,6 +378,55 @@ h2 {
   cursor: pointer;
 }
 
+/* ---------- update banner ---------- */
+
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 18px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.update-banner > svg {
+  color: var(--accent-hover);
+  flex: none;
+}
+
+#update-text {
+  flex: 1;
+}
+
+.update-banner[data-status='error'] {
+  background: color-mix(in srgb, var(--danger) 14%, var(--surface));
+  border-bottom-color: color-mix(in srgb, var(--danger) 35%, transparent);
+}
+
+.progress {
+  width: 180px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progress i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+
+.update-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+}
+
 /* ---------- viewer ---------- */
 
 .viewer {

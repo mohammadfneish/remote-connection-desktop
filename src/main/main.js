@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ConfigStore } from './config.js';
 import { InputInjector } from './input.js';
+import { Updater } from './updater.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkg = createRequire(import.meta.url)('../../package.json');
@@ -31,6 +32,7 @@ if (!app.requestSingleInstanceLock()) {
   let win = null;
   let config = null;
   let input = null;
+  let updater = null;
   let shareSourceId = null;
 
   app.on('second-instance', () => {
@@ -50,6 +52,12 @@ if (!app.requestSingleInstanceLock()) {
     });
     if (typeof args.server === 'string') config.update({ serverUrl: args.server });
     input = new InputInjector();
+    updater = new Updater({
+      getServerUrl: () => config.get().serverUrl,
+      onState: (state) => win?.webContents.send('update:state', state),
+      // Packaged builds check automatically; RC_UPDATES=1 enables it in development.
+      enabled: app.isPackaged || process.env.RC_UPDATES === '1',
+    });
 
     const allowed = new Set(['media', 'display-capture', 'fullscreen', 'clipboard-sanitized-write']);
     session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => callback(allowed.has(permission)));
@@ -65,9 +73,11 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc();
     Menu.setApplicationMenu(null);
     createWindow();
+    updater.start();
   });
 
   app.on('window-all-closed', () => app.quit());
+  app.on('before-quit', () => updater?.stop());
 
   function createWindow() {
     win = new BrowserWindow({
@@ -160,5 +170,9 @@ if (!app.requestSingleInstanceLock()) {
     });
     ipcMain.on('win:fullscreen', (_e, on) => win?.setFullScreen(Boolean(on)));
     ipcMain.on('log', (_e, line) => console.log('[app]', line));
+
+    ipcMain.handle('update:get-state', () => updater.state);
+    ipcMain.handle('update:check', () => updater.check({ manual: true }));
+    ipcMain.handle('update:install', (e) => fromWindow(e) && updater.install());
   }
 }

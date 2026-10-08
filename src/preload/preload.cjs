@@ -19,4 +19,15 @@ contextBridge.exposeInMainWorld('rc', {
   attention: () => ipcRenderer.send('win:attention'),
   setFullScreen: (on) => ipcRenderer.send('win:fullscreen', on),
   log: (line) => ipcRenderer.send('log', String(line)),
+
+  updates: {
+    getState: () => ipcRenderer.invoke('update:get-state'),
+    check: () => ipcRenderer.invoke('update:check'),
+    install: () => ipcRenderer.invoke('update:install'),
+    onState: (callback) => {
+      const listener = (_e, state) => callback(state);
+      ipcRenderer.on('update:state', listener);
+      return () => ipcRenderer.removeListener('update:state', listener);
+    },
+  },
 });

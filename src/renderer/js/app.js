@@ -48,6 +48,7 @@ async function init() {
   renderRecent();
   bindUi();
   bindSignaling();
+  bindUpdates();
 
   const input = await rc.inputStatus();
   if (!input.available) {
@@ -306,6 +307,62 @@ function renderStats(s) {
   if (s.kbps != null) parts.push(s.kbps >= 1000 ? `${(s.kbps / 1000).toFixed(1)} Mbps` : `${s.kbps} kbps`);
   if (s.rttMs != null) parts.push(`${s.rttMs} ms`);
   $('viewer-stats').textContent = parts.join(' · ');
+}
+
+// ---------------------------------------------------------------- updates
+
+let dismissedUpdate = null;
+
+async function bindUpdates() {
+  rc.updates.onState(renderUpdate);
+  renderUpdate(await rc.updates.getState());
+
+  $('update-install').addEventListener('click', () => {
+    if ((state.host || state.viewer) && !confirm('Updating restarts the app and ends the current session. Continue?')) return;
+    rc.updates.install();
+  });
+  $('update-later').addEventListener('click', async () => {
+    dismissedUpdate = (await rc.updates.getState()).release?.version ?? null;
+    $('update-banner').hidden = true;
+  });
+  $('update-check').addEventListener('click', async () => {
+    dismissedUpdate = null;
+    const result = await rc.updates.check();
+    if (result.status === 'up-to-date') toast(`You're up to date (version ${result.current}).`, 'ok');
+  });
+}
+
+function renderUpdate(s) {
+  const version = s.release?.version;
+  const banner = $('update-banner');
+  const busy = s.status === 'downloading' || s.status === 'installing';
+  banner.dataset.status = s.status;
+  banner.hidden = !(busy || (version && version !== dismissedUpdate && (s.status === 'available' || s.status === 'error')));
+
+  const percent = s.progress?.percent;
+  $('update-text').textContent =
+    {
+      available: `Remote Connection ${version} is available.`,
+      downloading: `Downloading version ${version}…${percent != null ? ` ${percent}%` : ''}`,
+      installing: `Installing version ${version}. The app will restart in a moment…`,
+      error: s.error,
+    }[s.status] ?? '';
+  $('update-progress').hidden = s.status !== 'downloading';
+  $('update-progress').firstElementChild.style.width = `${percent ?? 0}%`;
+  $('update-install').hidden = busy;
+  $('update-later').hidden = busy;
+  $('update-install').textContent = s.status === 'error' ? 'Retry' : s.canInstall ? 'Install & restart' : 'Download';
+
+  $('update-status').textContent =
+    {
+      checking: 'Checking for updates…',
+      'up-to-date': "You're up to date.",
+      available: `Version ${version} is available.`,
+      downloading: `Downloading version ${version}…`,
+      installing: `Installing version ${version}…`,
+      error: s.error,
+    }[s.status] ?? 'Updates are checked automatically.';
+  $('update-check').disabled = s.status === 'checking' || busy;
 }
 
 // ---------------------------------------------------------------- UI wiring
