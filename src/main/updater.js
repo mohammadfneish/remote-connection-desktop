@@ -30,13 +30,15 @@ export class Updater {
   constructor({ getServerUrl, onState, enabled = app.isPackaged }) {
     this.getServerUrl = getServerUrl;
     this.onState = onState;
-    this.enabled = enabled && !isDevVersion(app.getVersion());
+    // In a Microsoft Store (appx) build, Windows handles updates, so we never self-update.
+    this.enabled = enabled && !isDevVersion(app.getVersion()) && !process.windowsStore;
     this.os = platformKey();
     this.timer = null;
     this.state = { status: 'idle', current: app.getVersion(), canInstall: this.canInstall() };
   }
 
   canInstall() {
+    if (process.windowsStore) return false;
     return process.platform === 'win32' || Boolean(process.env.APPIMAGE);
   }
 

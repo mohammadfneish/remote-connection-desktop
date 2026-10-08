@@ -95,6 +95,17 @@
       "shortcutName": "Remote Connection",
       "runAfterFinish": true
     },
-    "publish": null
+    "publish": null,
+    "appx": {
+      "applicationId": "RemoteConnection",
+      "displayName": "Remote Connection",
+      "publisherDisplayName": "NovaTech",
+      "backgroundColor": "#0b4fd6",
+      "showNameOnTiles": true,
+      "languages": [
+        "en-US"
+      ],
+      "setBuildNumber": true
+    }
   }
 }
