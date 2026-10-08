@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, Menu, screen, session } from 'electron';
+import { app, BrowserWindow, desktopCapturer, ipcMain, Menu, screen, session, shell } from 'electron';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { ConfigStore } from './config.js';
 import { InputInjector } from './input.js';
 import { Updater } from './updater.js';
+import { ClipboardSync } from './clipboard-sync.js';
+import { FileReceiver } from './file-receiver.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkg = createRequire(import.meta.url)('../../package.json');
@@ -33,6 +35,8 @@ if (!app.requestSingleInstanceLock()) {
   let config = null;
   let input = null;
   let updater = null;
+  let clipboardSync = null;
+  let files = null;
   let shareSourceId = null;
 
   app.on('second-instance', () => {
@@ -52,6 +56,8 @@ if (!app.requestSingleInstanceLock()) {
     });
     if (typeof args.server === 'string') config.update({ serverUrl: args.server });
     input = new InputInjector();
+    clipboardSync = new ClipboardSync({ onChange: (item) => win?.webContents.send('clipboard:changed', item) });
+    files = new FileReceiver(path.join(app.getPath('downloads'), 'Remote Connection'));
     updater = new Updater({
       getServerUrl: () => config.get().serverUrl,
       onState: (state) => win?.webContents.send('update:state', state),
@@ -113,6 +119,8 @@ if (!app.requestSingleInstanceLock()) {
     win.on('closed', () => {
       win = null;
       input.stop();
+      clipboardSync.stop();
+      files.cancelAll();
     });
 
     win.loadFile(path.join(__dirname, '../renderer/index.html'));
@@ -170,6 +178,39 @@ if (!app.requestSingleInstanceLock()) {
     });
     ipcMain.on('win:fullscreen', (_e, on) => win?.setFullScreen(Boolean(on)));
     ipcMain.on('log', (_e, line) => console.log('[app]', line));
+
+    // Clipboard sync: watched only while a session is active.
+    ipcMain.handle('clipboard:watch', (e, on) => {
+      if (!fromWindow(e)) return;
+      if (on) clipboardSync.start();
+      else clipboardSync.stop();
+    });
+    ipcMain.handle('clipboard:write', (e, item) => fromWindow(e) && clipboardSync.write(item));
+
+    // Incoming files are written to Downloads/Remote Connection.
+    ipcMain.handle('files:begin', (e, id, info) => {
+      if (!fromWindow(e)) throw new Error('not allowed');
+      return files.begin(id, { name: info?.name, size: Number(info?.size) });
+    });
+    ipcMain.on('files:chunk', (e, id, chunk) => {
+      if (!fromWindow(e)) return;
+      try {
+        files.write(id, chunk);
+      } catch (err) {
+        console.error('[files] write failed:', err.message);
+        files.cancel(id); // the following files:end then fails and the sender is told
+      }
+    });
+    ipcMain.handle('files:end', async (e, id) => {
+      if (!fromWindow(e)) throw new Error('not allowed');
+      const { name } = await files.end(id);
+      return { name };
+    });
+    ipcMain.handle('files:cancel', (e, id) => fromWindow(e) && files.cancel(id));
+    ipcMain.handle('files:reveal', (e, id) => {
+      const file = fromWindow(e) && files.pathOf(id);
+      if (file) shell.showItemInFolder(file);
+    });
 
     ipcMain.handle('update:get-state', () => updater.state);
     ipcMain.handle('update:check', () => updater.check({ manual: true }));

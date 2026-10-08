@@ -14,6 +14,7 @@ const INPUT_TYPES = new Set(['mm', 'md', 'mu', 'wh', 'kd', 'ku']);
  *   host -> viewer: { t: 'hello', name, platform }, { t: 'screens', list, current },
  *                   { t: 'control', allowed }
  *   viewer -> host: input events (see main/input.js), { t: 'screen', id }
+ * Clipboard and files use their own channels (see session-share.js).
  */
 export class HostSession extends PeerSession {
   constructor({ sessionId, peer, signaling, iceServers, device, allowControl = true }) {
@@ -49,6 +50,8 @@ export class HostSession extends PeerSession {
       this.sendControl({ t: 'control', allowed: this.allowControl });
     };
     this.channel.onmessage = (event) => this.onControl(event.data);
+    this.share.attach(pc.createDataChannel('clipboard', { ordered: true }));
+    this.share.attach(pc.createDataChannel('files', { ordered: true }));
 
     await window.rc.host.start(this.current.displayId);
     await pc.setLocalDescription(await pc.createOffer());
@@ -97,6 +100,11 @@ export class HostSession extends PeerSession {
     this.current = next;
     await window.rc.host.setDisplay(next.displayId);
     this.sendScreens();
+  }
+
+  // A view-only viewer can't drop files onto this computer.
+  canReceiveFiles() {
+    return this.allowControl;
   }
 
   setAllowControl(allowed) {

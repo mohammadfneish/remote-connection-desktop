@@ -1,4 +1,5 @@
 import { Emitter } from './util.js';
+import { SessionShare } from './session-share.js';
 
 const DISCONNECT_GRACE_MS = 10_000;
 
@@ -18,6 +19,12 @@ export class PeerSession extends Emitter {
     this.buffered = []; // signals that arrived before the peer connection existed
     this.signalChain = Promise.resolve();
     this.disconnectTimer = null;
+    // Clipboard sync + file transfer (channels are attached by the subclasses).
+    this.share = new SessionShare({ canReceiveFiles: () => this.canReceiveFiles() });
+  }
+
+  canReceiveFiles() {
+    return true;
   }
 
   createPeer(iceServers) {
@@ -80,6 +87,7 @@ export class PeerSession extends Emitter {
     this.ended = true;
     clearTimeout(this.disconnectTimer);
     if (!remote) this.signaling.send({ type: 'end', sessionId: this.id, reason });
+    this.share.close();
     try {
       this.cleanup();
     } catch (err) {

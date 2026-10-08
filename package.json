@@ -1,7 +1,7 @@
 {
   "name": "@rc/desktop",
   "productName": "Remote Connection",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Remote desktop client (host + viewer)",
   "author": {

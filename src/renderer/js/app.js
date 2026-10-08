@@ -49,6 +49,7 @@ async function init() {
   bindUi();
   bindSignaling();
   bindUpdates();
+  bindSharing();
 
   const input = await rc.inputStatus();
   if (!input.available) {
@@ -188,6 +189,7 @@ async function acceptIncoming(msg) {
     allowControl: $('allow-control').checked,
   });
   state.host = session;
+  attachShare(session, $('host-clipboard').checked);
   rc.log(`hosting session ${session.id} for ${msg.from.id}`);
 
   $('host-banner-text').textContent = `${formatId(msg.from.id)} is connecting…`;
@@ -200,6 +202,7 @@ async function acceptIncoming(msg) {
   });
   session.on('ended', (reason, { remote }) => {
     if (state.host === session) state.host = null;
+    updateClipboardWatch();
     $('host-banner').hidden = true;
     rc.log(`host session ${session.id} ended: ${reason}`);
     toast(remote && reason !== 'ended' ? `Session ended: ${reasonText(reason)}` : 'Session ended.');
@@ -242,6 +245,7 @@ function onOutgoingSession(msg) {
     stage: $('viewer-stage'),
   });
   state.viewer = session;
+  attachShare(session, $('viewer-clipboard').getAttribute('aria-pressed') === 'true');
   let remoteName = '';
 
   session.on('remote-info', ({ name, platform }) => {
@@ -269,6 +273,7 @@ function onOutgoingSession(msg) {
   session.on('stats', renderStats);
   session.on('ended', (reason, { remote }) => {
     if (state.viewer === session) state.viewer = null;
+    updateClipboardWatch();
     closeViewer();
     rc.log(`viewer session ${session.id} ended: ${reason}`);
     if (remote) toast(reasonText(reason), reason === 'ended' ? 'info' : 'error');
@@ -363,6 +368,158 @@ function renderUpdate(s) {
       error: s.error,
     }[s.status] ?? 'Updates are checked automatically.';
   $('update-check').disabled = s.status === 'checking' || busy;
+}
+
+// ---------------------------------------------------------------- clipboard & files
+
+const transferViews = new Map(); // transfer key -> { el, share }
+let pickerTarget = null;
+
+function attachShare(session, clipboardOn) {
+  session.share.setClipboardEnabled(clipboardOn);
+  session.share.on('transfer', (t) => renderTransfer(t, session.share));
+  session.share.on('clipboard-received', (kind) => rc.log(`clipboard: received ${kind} from ${formatId(session.peerId)}`));
+  updateClipboardWatch();
+}
+
+/** The clipboard is only watched while a session exists. */
+function updateClipboardWatch() {
+  rc.clipboard.watch(Boolean(state.host || state.viewer));
+}
+
+function bindSharing() {
+  rc.clipboard.onChange((item) => {
+    state.host?.share.localClipboard(item);
+    state.viewer?.share.localClipboard(item);
+  });
+
+  $('host-clipboard').addEventListener('change', (e) => state.host?.share.setClipboardEnabled(e.target.checked));
+  $('viewer-clipboard').addEventListener('click', (e) => {
+    const on = e.currentTarget.getAttribute('aria-pressed') !== 'true';
+    e.currentTarget.setAttribute('aria-pressed', String(on));
+    state.viewer?.share.setClipboardEnabled(on);
+    toast(on ? 'Clipboard sharing is on.' : 'Clipboard sharing is off.');
+  });
+
+  $('host-send-files').addEventListener('click', () => pickFiles(state.host));
+  $('viewer-send-files').addEventListener('click', () => pickFiles(state.viewer));
+  $('file-picker').addEventListener('change', (e) => {
+    sendFiles(pickerTarget, [...e.target.files]);
+    e.target.value = '';
+  });
+
+  // Drag & drop: onto the remote screen while viewing, anywhere on the window while hosting.
+  const viewing = () => !$('viewer').hidden && state.viewer;
+  const hasFiles = (e) => [...(e.dataTransfer?.types ?? [])].includes('Files');
+  document.addEventListener('dragover', (e) => {
+    e.preventDefault(); // never let Electron open a dropped file
+    if (!hasFiles(e)) return;
+    e.dataTransfer.dropEffect = viewing() || state.host ? 'copy' : 'none';
+    $('drop-overlay').hidden = !viewing();
+  });
+  document.addEventListener('dragleave', (e) => {
+    if (!e.relatedTarget) $('drop-overlay').hidden = true;
+  });
+  document.addEventListener('drop', (e) => {
+    e.preventDefault();
+    $('drop-overlay').hidden = true;
+    if (!hasFiles(e)) return;
+    const target = viewing() || state.host;
+    if (!target) return toast('Connect to a device to send files.', 'error');
+
+    const files = [];
+    let folders = 0;
+    for (const item of e.dataTransfer.items) {
+      if (item.kind !== 'file') continue;
+      if (item.webkitGetAsEntry?.()?.isDirectory) folders += 1;
+      else files.push(item.getAsFile());
+    }
+    if (folders) toast('Folders can’t be sent yet. Send the files inside, or zip the folder first.', 'error');
+    sendFiles(target, files.filter(Boolean));
+  });
+}
+
+function pickFiles(session) {
+  if (!session?.share.filesReady) return toast('The connection isn’t ready yet.', 'error');
+  pickerTarget = session;
+  $('file-picker').click();
+}
+
+function sendFiles(session, files) {
+  if (!files.length) return;
+  if (!session || session.ended || !session.share.sendFiles(files)) toast('The connection isn’t ready yet.', 'error');
+}
+
+const formatBytes = (n) => {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 ** 2) return `${(n / 1024).toFixed(0)} KB`;
+  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+  return `${(n / 1024 ** 3).toFixed(2)} GB`;
+};
+
+const ARROW = {
+  out: '<svg viewBox="0 0 24 24"><path d="M12 19V5m0 0-6 6m6-6 6 6" /></svg>',
+  in: '<svg viewBox="0 0 24 24"><path d="M12 5v14m0 0-6-6m6 6 6-6" /></svg>',
+};
+
+function renderTransfer(t, share) {
+  let view = transferViews.get(t.key);
+  if (!view) {
+    const el = document.createElement('div');
+    el.className = 'transfer';
+    el.innerHTML = `
+      <div class="transfer-head">${ARROW[t.direction]}<span class="transfer-name"></span>
+        <button class="icon-btn" title="Cancel" aria-label="Cancel transfer"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
+      </div>
+      <div class="progress"><i></i></div>
+      <div class="transfer-meta"><span class="transfer-status"></span><span class="transfer-action"></span></div>`;
+    el.querySelector('.transfer-name').textContent = t.name;
+    el.querySelector('.transfer-name').title = t.name;
+    el.querySelector('.icon-btn').addEventListener('click', () => {
+      if (el.dataset.status === 'active') share.cancelTransfer(t.key);
+      else removeTransfer(t.key);
+    });
+    $('transfers').append(el);
+    view = { el, share };
+    transferViews.set(t.key, view);
+  }
+
+  const { el } = view;
+  el.dataset.status = t.status;
+  const percent = t.size ? Math.round((t.done / t.size) * 100) : t.status === 'done' ? 100 : 0;
+  el.querySelector('.progress i').style.width = `${percent}%`;
+  el.querySelector('.icon-btn').title = t.status === 'active' ? 'Cancel' : 'Dismiss';
+
+  const verb = t.direction === 'out' ? 'Sending' : 'Receiving';
+  el.querySelector('.transfer-status').textContent =
+    {
+      active: `${verb} · ${formatBytes(t.done)} of ${formatBytes(t.size)}`,
+      done: t.direction === 'out' ? `Sent · ${formatBytes(t.size)}` : 'Saved to Downloads › Remote Connection',
+      cancelled: 'Cancelled',
+      failed: t.message || 'Failed',
+    }[t.status] ?? '';
+
+  const action = el.querySelector('.transfer-action');
+  action.replaceChildren();
+  if (t.status === 'done' && t.canReveal) {
+    const reveal = document.createElement('button');
+    reveal.textContent = 'Show in folder';
+    reveal.addEventListener('click', () => rc.files.reveal(t.id));
+    action.append(reveal);
+  }
+
+  if (t.status !== 'active') {
+    clearTimeout(view.timer);
+    view.timer = setTimeout(() => removeTransfer(t.key), t.canReveal ? 30_000 : 8_000);
+  }
+}
+
+function removeTransfer(key) {
+  const view = transferViews.get(key);
+  if (!view) return;
+  clearTimeout(view.timer);
+  view.el.remove();
+  transferViews.delete(key);
 }
 
 // ---------------------------------------------------------------- UI wiring

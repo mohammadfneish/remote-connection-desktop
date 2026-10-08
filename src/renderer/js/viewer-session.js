@@ -35,6 +35,7 @@ export class ViewerSession extends PeerSession {
     };
 
     pc.ondatachannel = ({ channel }) => {
+      if (this.share.attach(channel)) return; // clipboard / files
       if (channel.label !== 'control') return;
       this.channel = channel;
       channel.onmessage = (event) => this.onControl(event.data);

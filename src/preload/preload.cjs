@@ -20,6 +20,24 @@ contextBridge.exposeInMainWorld('rc', {
   setFullScreen: (on) => ipcRenderer.send('win:fullscreen', on),
   log: (line) => ipcRenderer.send('log', String(line)),
 
+  clipboard: {
+    watch: (on) => ipcRenderer.invoke('clipboard:watch', Boolean(on)),
+    write: (item) => ipcRenderer.invoke('clipboard:write', item),
+    onChange: (callback) => {
+      const listener = (_e, item) => callback(item);
+      ipcRenderer.on('clipboard:changed', listener);
+      return () => ipcRenderer.removeListener('clipboard:changed', listener);
+    },
+  },
+
+  files: {
+    begin: (id, info) => ipcRenderer.invoke('files:begin', id, info),
+    chunk: (id, data) => ipcRenderer.send('files:chunk', id, data),
+    end: (id) => ipcRenderer.invoke('files:end', id),
+    cancel: (id) => ipcRenderer.invoke('files:cancel', id),
+    reveal: (id) => ipcRenderer.invoke('files:reveal', id),
+  },
+
   updates: {
     getState: () => ipcRenderer.invoke('update:get-state'),
     check: () => ipcRenderer.invoke('update:check'),
