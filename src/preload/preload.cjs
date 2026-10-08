@@ -38,6 +38,26 @@ contextBridge.exposeInMainWorld('rc', {
     reveal: (id) => ipcRenderer.invoke('files:reveal', id),
   },
 
+  system: {
+    get: () => ipcRenderer.invoke('system:get'),
+    setStartAtLogin: (on) => ipcRenderer.invoke('system:set-start-at-login', Boolean(on)),
+    setCloseToTray: (on) => ipcRenderer.invoke('system:set-close-to-tray', Boolean(on)),
+  },
+
+  unattended: {
+    set: (password) => ipcRenderer.invoke('unattended:set', String(password)),
+    disable: () => ipcRenderer.invoke('unattended:disable'),
+    verify: (password) => ipcRenderer.invoke('unattended:verify', String(password)),
+  },
+
+  trusted: {
+    add: (device) => ipcRenderer.invoke('trusted:add', device),
+    remove: (id) => ipcRenderer.invoke('trusted:remove', String(id)),
+  },
+
+  // Tell the main process a remote session is (in)active, so it can surface it to the user.
+  hosting: (active, peer) => ipcRenderer.send('session:hosting', { active: Boolean(active), peer }),
+
   updates: {
     getState: () => ipcRenderer.invoke('update:get-state'),
     check: () => ipcRenderer.invoke('update:check'),

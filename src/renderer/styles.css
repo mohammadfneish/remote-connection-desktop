@@ -649,6 +649,68 @@ h2 {
   margin-top: 20px;
 }
 
+.settings-section {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.check-row input {
+  margin-top: 2px;
+  flex: none;
+}
+
+.check-row em {
+  font-style: normal;
+}
+
+.ok-text {
+  flex: 1;
+  color: var(--ok);
+  font-weight: 500;
+}
+
+#unattended-save {
+  margin-top: 10px;
+}
+
+.trusted-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trusted-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.trusted-list .tdev-id {
+  font-variant-numeric: tabular-nums;
+}
+
+.trusted-list button {
+  border: 0;
+  background: none;
+  color: var(--danger);
+  font: inherit;
+  cursor: pointer;
+}
+
 #incoming-text {
   font-size: 15px;
 }

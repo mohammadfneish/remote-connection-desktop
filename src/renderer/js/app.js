@@ -13,6 +13,7 @@ const MAX_RECENT = 8;
 
 const state = {
   config: null,
+  system: { startAtLogin: { supported: false, enabled: false }, closeToTray: true, unattendedEnabled: false, trusted: [] },
   password: randomPassword(),
   failedPasswords: [], // timestamps of wrong-password attempts
   host: null, // HostSession
@@ -36,6 +37,7 @@ init();
 
 async function init() {
   state.config = await rc.getConfig();
+  state.system = await rc.system.get();
   signaling.url = state.config.serverUrl;
 
   if (state.config.profile) {
@@ -126,20 +128,31 @@ function renderStatus(s) {
 
 // ---------------------------------------------------------------- hosting
 
-function onIncoming(msg) {
+async function onIncoming(msg) {
   const reject = (reason) => signaling.send({ type: 'reject', sessionId: msg.sessionId, reason });
 
   if (state.host || state.incoming) return reject('busy');
+
+  // Read the current unattended/trusted settings from the main process (authoritative).
+  state.system = await rc.system.get();
 
   if (msg.password) {
     const now = Date.now();
     state.failedPasswords = state.failedPasswords.filter((t) => now - t < LOCKOUT_MS);
     if (state.failedPasswords.length >= MAX_FAILED_PASSWORDS) return reject('locked');
-    if (safeEqual(msg.password, state.password)) return acceptIncoming(msg);
+    // Accept either the one-time session password or the unattended password the local
+    // user set in Settings (verified in the main process against a salted hash).
+    const sessionMatch = safeEqual(msg.password, state.password);
+    const unattendedMatch = await rc.unattended.verify(msg.password);
+    if (sessionMatch || unattendedMatch) return acceptIncoming(msg);
     state.failedPasswords.push(now);
     rc.log(`wrong password from ${msg.from.id}`);
     return reject('wrong-password');
   }
+
+  // A device the local user previously chose to "always allow" skips the prompt. The host
+  // still sees the banner and gets a notification, and can disconnect any time.
+  if (state.system.trusted.some((d) => d.id === msg.from.id)) return acceptIncoming(msg);
 
   promptIncoming(msg);
 }
@@ -148,6 +161,7 @@ function promptIncoming(msg) {
   state.incoming = msg;
   $('incoming-text').textContent = `${formatId(msg.from.id)} wants to connect to this device.`;
   $('incoming-meta').textContent = [msg.from.name, msg.from.platform].filter(Boolean).join(' · ');
+  $('incoming-trust').checked = false;
 
   let remaining = PROMPT_TIMEOUT_S;
   const tick = () => ($('incoming-countdown').textContent = `(${remaining})`);
@@ -165,6 +179,7 @@ function promptIncoming(msg) {
 function decideIncoming(accept) {
   const msg = state.incoming;
   if (!msg) return;
+  if (accept) msg.trustDevice = $('incoming-trust').checked;
   closeIncoming();
   if (accept) acceptIncoming(msg);
   else signaling.send({ type: 'reject', sessionId: msg.sessionId, reason: 'rejected' });
@@ -196,17 +211,24 @@ async function acceptIncoming(msg) {
   $('host-banner').hidden = false;
   rc.attention();
 
+  const peerLabel = `${formatId(msg.from.id)}${msg.from.name ? ` (${msg.from.name})` : ''}`;
   session.on('connected', () => {
-    $('host-banner-text').textContent = `Your screen is shared with ${formatId(msg.from.id)}${msg.from.name ? ` (${msg.from.name})` : ''}`;
+    $('host-banner-text').textContent = `Your screen is shared with ${peerLabel}`;
+    // Make the session visible to whoever is at this computer: tray, window, notification.
+    rc.hosting(true, peerLabel);
     rc.log(`host session ${session.id} connected`);
   });
   session.on('ended', (reason, { remote }) => {
     if (state.host === session) state.host = null;
+    rc.hosting(false);
     updateClipboardWatch();
     $('host-banner').hidden = true;
     rc.log(`host session ${session.id} ended: ${reason}`);
     toast(remote && reason !== 'ended' ? `Session ended: ${reasonText(reason)}` : 'Session ended.');
   });
+
+  // The local user ticked "always allow this device" on the prompt.
+  if (msg.trustDevice) rc.trusted.add({ id: msg.from.id, name: msg.from.name }).then((s) => (state.system = s));
 
   try {
     await session.start();
@@ -591,9 +613,11 @@ function bindUi() {
   $('btn-settings').addEventListener('click', () => {
     $('set-server').value = state.config.serverUrl;
     $('set-name').value = state.config.deviceName;
+    renderSystemSettings();
     $('settings-modal').showModal();
   });
   $('settings-cancel').addEventListener('click', () => $('settings-modal').close());
+  bindSystemSettings();
   $('settings-form').addEventListener('submit', async (e) => {
     const serverUrl = $('set-server').value.trim();
     const deviceName = $('set-name').value.trim();
@@ -610,6 +634,69 @@ function bindUi() {
     if (serverChanged || nameChanged) signaling.setUrl(state.config.serverUrl);
   });
 }
+
+// ---------------------------------------------------------------- unattended access, startup & tray
+
+function renderSystemSettings() {
+  const s = state.system;
+  $('row-start-login').hidden = !s.startAtLogin.supported;
+  $('set-start-login').checked = s.startAtLogin.enabled;
+  $('set-close-tray').checked = s.closeToTray;
+
+  $('unattended-off').hidden = s.unattendedEnabled;
+  $('unattended-on').hidden = !s.unattendedEnabled;
+  $('set-unattended').value = '';
+
+  $('trusted-section').hidden = s.trusted.length === 0;
+  $('trusted-list').replaceChildren(
+    ...s.trusted.map((d) => {
+      const li = document.createElement('li');
+      const label = document.createElement('span');
+      label.innerHTML = `<span class="tdev-id">${formatId(d.id)}</span>${d.name ? ` · ${escapeText(d.name)}` : ''}`;
+      const remove = document.createElement('button');
+      remove.textContent = 'Remove';
+      remove.addEventListener('click', async () => {
+        state.system = await rc.trusted.remove(d.id);
+        renderSystemSettings();
+      });
+      li.append(label, remove);
+      return li;
+    }),
+  );
+}
+
+function bindSystemSettings() {
+  $('set-start-login').addEventListener('change', async (e) => {
+    state.system = await rc.system.setStartAtLogin(e.target.checked);
+    renderSystemSettings();
+  });
+  $('set-close-tray').addEventListener('change', async (e) => {
+    state.system = await rc.system.setCloseToTray(e.target.checked);
+  });
+
+  const saveUnattended = async () => {
+    const value = $('set-unattended').value;
+    const result = await rc.unattended.set(value);
+    if (result.error) return toast(result.error, 'error');
+    state.system = result;
+    renderSystemSettings();
+    toast('Unattended access is on. Keep this password private.', 'ok');
+  };
+  $('unattended-save').addEventListener('click', saveUnattended);
+  $('set-unattended').addEventListener('keydown', (e) => e.key === 'Enter' && (e.preventDefault(), saveUnattended()));
+
+  $('unattended-change').addEventListener('click', () => {
+    state.system = { ...state.system, unattendedEnabled: false };
+    renderSystemSettings();
+  });
+  $('unattended-disable').addEventListener('click', async () => {
+    state.system = await rc.unattended.disable();
+    renderSystemSettings();
+    toast('Unattended access is off.');
+  });
+}
+
+const escapeText = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
 function renderRecent() {
   const list = $('recent');

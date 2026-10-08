@@ -139,6 +139,10 @@
       <p id="incoming-text"></p>
       <p id="incoming-meta" class="muted small"></p>
       <p class="muted small">They will see your screen and can control your mouse and keyboard.</p>
+      <label class="check-row">
+        <input type="checkbox" id="incoming-trust" />
+        <span>Always allow this device (connect without asking next time)</span>
+      </label>
       <div class="modal-actions">
         <button id="incoming-reject" class="btn btn-ghost">Decline <span id="incoming-countdown"></span></button>
         <button id="incoming-accept" class="btn btn-primary">Accept</button>
@@ -152,13 +156,48 @@
         <input id="set-server" class="input" placeholder="wss://rdc.novatechsai.com" required />
         <label class="field-label" for="set-name">Device name</label>
         <input id="set-name" class="input" maxlength="64" required />
+
+        <div class="settings-section">
+          <div class="field-label">This computer</div>
+          <label class="check-row" id="row-start-login" hidden>
+            <input type="checkbox" id="set-start-login" />
+            <span>Start Remote Connection when I sign in</span>
+          </label>
+          <label class="check-row">
+            <input type="checkbox" id="set-close-tray" />
+            <span>Keep running in the tray when I close the window <em class="muted">(so this computer stays reachable)</em></span>
+          </label>
+        </div>
+
+        <div class="settings-section">
+          <div class="field-label">Unattended access</div>
+          <p class="muted small">
+            Set a permanent password so you can reach <strong>this</strong> computer later without someone here to accept.
+            You'll still see a banner and a notification whenever anyone connects.
+          </p>
+          <div id="unattended-off">
+            <input id="set-unattended" class="input" type="password" autocomplete="new-password" placeholder="Choose a password (at least 8 characters)" />
+            <button id="unattended-save" class="btn btn-primary btn-sm btn-block" type="button">Turn on unattended access</button>
+          </div>
+          <div id="unattended-on" class="value-row" hidden>
+            <span class="ok-text">● Unattended access is on</span>
+            <button id="unattended-change" class="btn btn-ghost btn-sm" type="button">Change</button>
+            <button id="unattended-disable" class="btn btn-ghost btn-sm" type="button">Turn off</button>
+          </div>
+        </div>
+
+        <div class="settings-section" id="trusted-section" hidden>
+          <div class="field-label">Always-allowed devices</div>
+          <ul id="trusted-list" class="trusted-list"></ul>
+        </div>
+
         <div class="update-row">
           <span class="muted small">Version <span id="app-version"></span> · <span id="update-status">Updates are checked automatically.</span></span>
           <button id="update-check" class="btn btn-ghost btn-sm" type="button">Check for updates</button>
         </div>
         <div class="modal-actions">
-          <button id="settings-cancel" class="btn btn-ghost" type="button">Cancel</button>
-          <button class="btn btn-primary" type="submit" value="save">Save</button>
+          <button id="settings-cancel" class="btn btn-ghost" type="button">Close</button>
+          <button class="btn btn-primary" type="submit" value="save">Save server &amp; name</button>
         </div>
       </form>
     </dialog>

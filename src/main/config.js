@@ -2,7 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { safeStorage } from 'electron';
 
+// Fields the UI may change through config:save. Security-sensitive fields (the unattended
+// password hash, trusted devices, tray preferences) are only changed by dedicated
+// main-process handlers, never directly by the renderer.
 const EDITABLE = ['serverUrl', 'deviceName', 'deviceId', 'deviceToken', 'recent'];
+const INTERNAL = ['unattended', 'trusted', 'closeToTray', 'trayNoticeShown'];
 
 /**
  * Small JSON settings file in the profile's userData directory. The device token
@@ -20,8 +24,9 @@ export class ConfigStore {
     this.data = { ...defaults, ...saved };
   }
 
+  /** What the UI may see: never the token ciphertext nor the unattended password hash. */
   get() {
-    const { deviceTokenEnc, ...rest } = this.data;
+    const { deviceTokenEnc, unattended, ...rest } = this.data;
     let deviceToken = rest.deviceToken ?? null;
     if (deviceTokenEnc) {
       try {
@@ -30,7 +35,20 @@ export class ConfigStore {
         deviceToken = null; // keychain changed; the server will issue a new ID
       }
     }
-    return { ...rest, deviceToken };
+    // Only whether an unattended password exists, not the hash itself.
+    return { ...rest, deviceToken, unattendedEnabled: Boolean(unattended?.hash) };
+  }
+
+  /** Reads a main-process-only field (never sent to the renderer). */
+  internal(key) {
+    return this.data[key];
+  }
+
+  /** Writes main-process-only fields, from trusted main-process code only. */
+  setInternal(patch = {}) {
+    for (const key of INTERNAL) if (key in patch) this.data[key] = patch[key];
+    this.save();
+    return this.get();
   }
 
   update(patch = {}) {
@@ -49,10 +67,14 @@ export class ConfigStore {
         this.data[key] = patch[key];
       }
     }
+    this.save();
+    return this.get();
+  }
+
+  save() {
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const tmp = `${this.file}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2));
     fs.renameSync(tmp, this.file);
-    return this.get();
   }
 }

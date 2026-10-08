@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, Menu, screen, session, shell } from 'electron';
+import { app, BrowserWindow, desktopCapturer, ipcMain, Menu, Notification, screen, session, shell } from 'electron';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,6 +8,9 @@ import { InputInjector } from './input.js';
 import { Updater } from './updater.js';
 import { ClipboardSync } from './clipboard-sync.js';
 import { FileReceiver } from './file-receiver.js';
+import { addTrusted, hashPassword, validatePassword, verifyPassword } from './access.js';
+import { HIDDEN_ARG, setStartAtLogin, startAtLogin } from './autostart.js';
+import { AppTray } from './tray.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkg = createRequire(import.meta.url)('../../package.json');
@@ -37,13 +40,13 @@ if (!app.requestSingleInstanceLock()) {
   let updater = null;
   let clipboardSync = null;
   let files = null;
+  let tray = null;
+  let quitting = false;
   let shareSourceId = null;
+  // When launched at login we open to the tray; the tray icon stays visible either way.
+  const startHidden = process.argv.includes(HIDDEN_ARG);
 
-  app.on('second-instance', () => {
-    if (!win) return;
-    if (win.isMinimized()) win.restore();
-    win.focus();
-  });
+  app.on('second-instance', () => showWindow());
 
   app.whenReady().then(() => {
     if (process.platform === 'win32') app.setAppUserModelId('com.remoteconnection.desktop');
@@ -53,6 +56,8 @@ if (!app.requestSingleInstanceLock()) {
       deviceName: os.hostname(),
       deviceId: null,
       recent: [],
+      closeToTray: true,
+      trusted: [],
     });
     if (typeof args.server === 'string') config.update({ serverUrl: args.server });
     input = new InputInjector();
@@ -78,12 +83,45 @@ if (!app.requestSingleInstanceLock()) {
 
     registerIpc();
     Menu.setApplicationMenu(null);
+    tray = new AppTray({
+      iconPath: path.join(__dirname, 'icon.png'),
+      onOpen: () => showWindow(),
+      onCheckUpdates: async () => {
+        showWindow();
+        const state = await updater.check({ manual: true });
+        if (state.status === 'up-to-date') notify(`You're up to date (version ${state.current}).`);
+      },
+      onQuit: () => app.quit(),
+    });
+    tray.update({ deviceId: config.get().deviceId, unattended: config.get().unattendedEnabled });
     createWindow();
     updater.start();
   });
 
-  app.on('window-all-closed', () => app.quit());
-  app.on('before-quit', () => updater?.stop());
+  // Don't quit when the window is closed; keep running in the tray so the computer stays
+  // reachable. The user quits explicitly from the tray menu.
+  app.on('window-all-closed', () => {});
+  app.on('before-quit', () => {
+    quitting = true;
+    updater?.stop();
+  });
+
+  function showWindow({ focus = true } = {}) {
+    if (!win) createWindow();
+    if (win.isMinimized()) win.restore();
+    if (focus) {
+      win.show();
+      win.focus();
+    } else if (!win.isVisible()) {
+      win.showInactive();
+    }
+  }
+
+  function notify(body) {
+    if (Notification.isSupported()) {
+      new Notification({ title: 'Remote Connection', body, icon: path.join(__dirname, 'icon.png') }).show();
+    }
+  }
 
   function createWindow() {
     win = new BrowserWindow({
@@ -114,8 +152,21 @@ if (!app.requestSingleInstanceLock()) {
       else console.log('[renderer]', message);
     });
 
-    win.once('ready-to-show', () => win.show());
+    win.once('ready-to-show', () => {
+      if (!startHidden) win.show();
+    });
     win.on('focus', () => win.flashFrame(false));
+    // Closing the window keeps the app in the tray so the computer stays reachable; it only
+    // really quits from the tray menu (or when "close to tray" is turned off in Settings).
+    win.on('close', (e) => {
+      if (quitting || config.internal('closeToTray') === false) return;
+      e.preventDefault();
+      win.hide();
+      if (!config.internal('trayNoticeShown')) {
+        config.setInternal({ trayNoticeShown: true });
+        notify('Remote Connection is still running in the tray so this computer stays reachable. Right-click the tray icon to quit.');
+      }
+    });
     win.on('closed', () => {
       win = null;
       input.stop();
@@ -141,7 +192,69 @@ if (!app.requestSingleInstanceLock()) {
       },
     }));
 
-    ipcMain.handle('config:save', (_e, patch) => config.update(patch));
+    ipcMain.handle('config:save', (_e, patch) => {
+      const saved = config.update(patch);
+      tray?.update({ deviceId: saved.deviceId });
+      return saved;
+    });
+
+    // ---- background, startup and unattended access.
+    // Every one of these is set by the person physically at this computer, in Settings.
+    const systemState = () => ({
+      startAtLogin: startAtLogin(),
+      closeToTray: config.internal('closeToTray') !== false,
+      unattendedEnabled: config.get().unattendedEnabled,
+      trusted: config.internal('trusted') ?? [],
+    });
+    ipcMain.handle('system:get', () => systemState());
+    ipcMain.handle('system:set-start-at-login', (e, on) => {
+      if (fromWindow(e)) setStartAtLogin(Boolean(on));
+      return systemState();
+    });
+    ipcMain.handle('system:set-close-to-tray', (e, on) => {
+      if (fromWindow(e)) config.setInternal({ closeToTray: Boolean(on) });
+      return systemState();
+    });
+
+    // Unattended access: a password the local user sets so they can reach their own computer
+    // later. Stored only as a salted hash; the renderer never receives it.
+    ipcMain.handle('unattended:set', (e, password) => {
+      if (!fromWindow(e)) return { error: 'not allowed' };
+      const error = validatePassword(password);
+      if (error) return { error };
+      config.setInternal({ unattended: hashPassword(password) });
+      tray?.update({ unattended: true });
+      return systemState();
+    });
+    ipcMain.handle('unattended:disable', (e) => {
+      if (fromWindow(e)) config.setInternal({ unattended: null });
+      tray?.update({ unattended: false });
+      return systemState();
+    });
+    ipcMain.handle('unattended:verify', (e, password) => fromWindow(e) && verifyPassword(password, config.internal('unattended')));
+
+    // Devices the user chose to trust ("always allow"), so an approved helper isn't
+    // re-prompted each time. Removable in Settings.
+    ipcMain.handle('trusted:add', (e, device) => {
+      if (fromWindow(e)) config.setInternal({ trusted: addTrusted(config.internal('trusted'), device) });
+      return systemState();
+    });
+    ipcMain.handle('trusted:remove', (e, id) => {
+      if (fromWindow(e)) config.setInternal({ trusted: (config.internal('trusted') ?? []).filter((d) => d.id !== id) });
+      return systemState();
+    });
+
+    // Someone connected to this computer. Always surface it: bring the window up and notify,
+    // so a session is never silent to whoever is at the machine.
+    ipcMain.on('session:hosting', (e, info) => {
+      if (!fromWindow(e)) return;
+      const label = info?.active ? String(info.peer ?? 'Someone').slice(0, 80) : null;
+      tray?.update({ connectedTo: label });
+      if (label) {
+        showWindow({ focus: false });
+        notify(`${label} is now connected to this computer. You can disconnect at any time.`);
+      }
+    });
 
     ipcMain.handle('screen:list', async () => {
       const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
