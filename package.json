@@ -1,0 +1,62 @@
+{
+  "name": "@rc/desktop",
+  "productName": "Remote Connection",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Remote desktop client (host + viewer)",
+  "author": {
+    "name": "Mohammad Fneish",
+    "email": "mohammadfneish@gmail.com"
+  },
+  "homepage": "https://github.com/mohammadfneish/remote-connection",
+  "type": "module",
+  "main": "src/main/main.js",
+  "remoteConnection": {
+    "defaultServerUrl": "wss://rdc.novatechsai.com"
+  },
+  "scripts": {
+    "start": "electron .",
+    "start:b": "electron . --profile=b",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "@nut-tree-fork/nut-js": "^4.2.6"
+  },
+  "devDependencies": {
+    "electron": "44.7.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.remoteconnection.desktop",
+    "productName": "Remote Connection",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.utilities",
+      "extendInfo": {
+        "NSScreenCaptureUsageDescription": "Remote Connection shares your screen with the device you approve."
+      },
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "build/icon.png"
+    },
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Remote Connection"
+    }
+  }
+}

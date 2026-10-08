@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src ws: wss:; media-src 'self' blob: mediastream:; img-src 'self' data:"
+    />
+    <title>Remote Connection</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-mark" src="assets/logo-mark.png" alt="" />
+        <span>Remote Connection</span>
+        <span id="profile-tag" class="profile-tag" hidden></span>
+      </div>
+      <div class="topbar-right">
+        <span id="status" class="status" data-state="connecting"><i></i><span>Connecting…</span></span>
+        <button id="btn-settings" class="icon-btn" title="Settings" aria-label="Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path
+              d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"
+            />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <div id="host-banner" class="host-banner" hidden>
+      <span class="pulse"></span>
+      <span id="host-banner-text">Your screen is being shared</span>
+      <label class="switch">
+        <input type="checkbox" id="allow-control" checked />
+        <span>Allow control</span>
+      </label>
+      <button id="host-disconnect" class="btn btn-danger btn-sm">Disconnect</button>
+    </div>
+
+    <main id="home" class="home">
+      <section class="card">
+        <h2>This device</h2>
+        <p class="muted">Share this ID and password with the person who will connect to you.</p>
+
+        <div class="field-label">Your ID</div>
+        <div class="value-row">
+          <span id="my-id" class="device-id">— — —</span>
+          <button class="icon-btn" data-copy="my-id" title="Copy ID" aria-label="Copy ID">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+          </button>
+        </div>
+
+        <div class="field-label">Password</div>
+        <div class="value-row">
+          <span id="my-password" class="password">········</span>
+          <button class="icon-btn" data-copy="my-password" title="Copy password" aria-label="Copy password">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+          </button>
+          <button id="regen-password" class="icon-btn" title="New password" aria-label="Generate new password">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8" /><path d="M21 3v5h-5" /></svg>
+          </button>
+        </div>
+
+        <p class="hint">Connections without the password must be accepted on this screen.</p>
+        <div id="input-warning" class="warning" hidden></div>
+      </section>
+
+      <section class="card">
+        <h2>Remote device</h2>
+        <p class="muted">Enter the ID of the device you want to control.</p>
+
+        <form id="connect-form" autocomplete="off">
+          <label class="field-label" for="remote-id">Remote ID</label>
+          <input id="remote-id" class="input input-id" inputmode="numeric" placeholder="123 456 789" maxlength="11" required />
+
+          <label class="field-label" for="remote-password">Password <span class="muted">(optional)</span></label>
+          <input id="remote-password" class="input" type="password" placeholder="Ask the remote side to accept instead" />
+
+          <button id="btn-connect" class="btn btn-primary btn-block" type="submit">Connect</button>
+        </form>
+
+        <div class="recent">
+          <div class="field-label">Recent</div>
+          <ul id="recent" class="recent-list"></ul>
+          <p id="recent-empty" class="muted small">No recent connections.</p>
+        </div>
+      </section>
+    </main>
+
+    <section id="viewer" class="viewer" hidden>
+      <div class="viewer-toolbar">
+        <div class="viewer-title">
+          <strong id="viewer-title">—</strong>
+          <span id="viewer-badge" class="badge" hidden></span>
+          <span id="viewer-stats" class="viewer-stats"></span>
+        </div>
+        <div class="viewer-actions">
+          <select id="viewer-screen" class="select" title="Remote screen" hidden></select>
+          <button id="viewer-viewonly" class="btn btn-ghost btn-sm" aria-pressed="false">View only</button>
+          <button id="viewer-fullscreen" class="btn btn-ghost btn-sm">Full screen</button>
+          <button id="viewer-disconnect" class="btn btn-danger btn-sm">Disconnect</button>
+        </div>
+      </div>
+      <div id="viewer-stage" class="viewer-stage" tabindex="0">
+        <video id="remote-video" autoplay playsinline muted></video>
+        <div id="viewer-overlay" class="viewer-overlay">
+          <div class="spinner"></div>
+          <p id="viewer-overlay-text">Connecting…</p>
+          <button id="viewer-cancel" class="btn btn-ghost btn-sm">Cancel</button>
+        </div>
+      </div>
+    </section>
+
+    <dialog id="incoming-modal" class="modal">
+      <h3>Incoming connection</h3>
+      <p id="incoming-text"></p>
+      <p id="incoming-meta" class="muted small"></p>
+      <p class="muted small">They will see your screen and can control your mouse and keyboard.</p>
+      <div class="modal-actions">
+        <button id="incoming-reject" class="btn btn-ghost">Decline <span id="incoming-countdown"></span></button>
+        <button id="incoming-accept" class="btn btn-primary">Accept</button>
+      </div>
+    </dialog>
+
+    <dialog id="settings-modal" class="modal">
+      <form id="settings-form" method="dialog">
+        <h3>Settings</h3>
+        <label class="field-label" for="set-server">Server URL</label>
+        <input id="set-server" class="input" placeholder="wss://rdc.novatechsai.com" required />
+        <label class="field-label" for="set-name">Device name</label>
+        <input id="set-name" class="input" maxlength="64" required />
+        <p class="muted small">Version <span id="app-version"></span></p>
+        <div class="modal-actions">
+          <button id="settings-cancel" class="btn btn-ghost" type="button">Cancel</button>
+          <button class="btn btn-primary" type="submit" value="save">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>
