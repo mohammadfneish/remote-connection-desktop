@@ -98,7 +98,7 @@
     "publish": null,
     "appx": {
       "applicationId": "RemoteConnection",
-      "displayName": "Remote Connection",
+      "displayName": "Novatech Remote Connection",
       "publisherDisplayName": "NovaTech",
       "backgroundColor": "#0b4fd6",
       "showNameOnTiles": true,
