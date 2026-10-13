@@ -21,7 +21,8 @@
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
-    "@nut-tree-fork/nut-js": "^4.2.6"
+    "@nut-tree-fork/nut-js": "^4.2.6",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "electron": "44.7.0",

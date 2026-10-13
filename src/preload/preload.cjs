@@ -47,7 +47,20 @@ contextBridge.exposeInMainWorld('rc', {
   unattended: {
     set: (password) => ipcRenderer.invoke('unattended:set', String(password)),
     disable: () => ipcRenderer.invoke('unattended:disable'),
-    verify: (password) => ipcRenderer.invoke('unattended:verify', String(password)),
+    check: (password, code) => ipcRenderer.invoke('unattended:check', String(password), code ? String(code) : ''),
+  },
+
+  twofa: {
+    begin: () => ipcRenderer.invoke('twofa:begin'),
+    enable: (code) => ipcRenderer.invoke('twofa:enable', String(code)),
+    disable: () => ipcRenderer.invoke('twofa:disable'),
+  },
+
+  addressBook: {
+    get: () => ipcRenderer.invoke('addressbook:get'),
+    save: (entry) => ipcRenderer.invoke('addressbook:save', entry),
+    remove: (id) => ipcRenderer.invoke('addressbook:remove', String(id)),
+    password: (id) => ipcRenderer.invoke('addressbook:password', String(id)),
   },
 
   trusted: {

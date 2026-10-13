@@ -13,7 +13,9 @@ const MAX_RECENT = 8;
 
 const state = {
   config: null,
-  system: { startAtLogin: { supported: false, enabled: false }, closeToTray: true, unattendedEnabled: false, trusted: [] },
+  system: { startAtLogin: { supported: false, enabled: false }, closeToTray: true, unattendedEnabled: false, twofaEnabled: false, trusted: [] },
+  addressBook: [],
+  pendingConnect: null, // { targetId, password } kept for a 2FA retry
   password: randomPassword(),
   failedPasswords: [], // timestamps of wrong-password attempts
   host: null, // HostSession
@@ -52,6 +54,9 @@ async function init() {
   bindSignaling();
   bindUpdates();
   bindSharing();
+  bindAddressBook();
+  bindTotpModal();
+  refreshAddressBook();
 
   const input = await rc.inputStatus();
   if (!input.available) {
@@ -140,14 +145,18 @@ async function onIncoming(msg) {
     const now = Date.now();
     state.failedPasswords = state.failedPasswords.filter((t) => now - t < LOCKOUT_MS);
     if (state.failedPasswords.length >= MAX_FAILED_PASSWORDS) return reject('locked');
-    // Accept either the one-time session password or the unattended password the local
-    // user set in Settings (verified in the main process against a salted hash).
-    const sessionMatch = safeEqual(msg.password, state.password);
-    const unattendedMatch = await rc.unattended.verify(msg.password);
-    if (sessionMatch || unattendedMatch) return acceptIncoming(msg);
+
+    // The one-time session password (shown on this screen) is an attended path — accept it
+    // directly, no second factor.
+    if (safeEqual(msg.password, state.password)) return acceptIncoming(msg);
+
+    // The unattended password (and its two-factor code, if enabled) is checked in main.
+    const result = await rc.unattended.check(msg.password, msg.code);
+    if (result.ok) return acceptIncoming(msg);
+    if (result.needCode && !result.badCode) return reject('totp-required'); // password ok, code needed
     state.failedPasswords.push(now);
-    rc.log(`wrong password from ${msg.from.id}`);
-    return reject('wrong-password');
+    rc.log(`failed unattended attempt from ${msg.from.id}${result.badCode ? ' (wrong code)' : ''}`);
+    return reject(result.badCode ? 'wrong-code' : 'wrong-password');
   }
 
   // A device the local user previously chose to "always allow" skips the prompt. The host
@@ -240,15 +249,17 @@ async function acceptIncoming(msg) {
 
 // ---------------------------------------------------------------- viewing
 
-function connectTo(rawId, password = '') {
+function connectTo(rawId, password = '', code = '') {
   const targetId = String(rawId).replace(/\D/g, '');
   if (state.viewer || state.outgoing) return toast('Close the current session first.', 'error');
   if (signaling.state !== 'online') return toast('Not connected to the server.', 'error');
 
   const ref = crypto.randomUUID();
+  // Remembered so we can resend with a 2FA code if the remote device asks for one.
+  state.pendingConnect = { targetId, password };
   state.outgoing = { ref, targetId };
-  openViewer(targetId, password ? 'Checking password…' : 'Waiting for the remote side to accept…');
-  signaling.send({ type: 'connect', targetId, password, ref });
+  openViewer(targetId, code ? 'Checking code…' : password ? 'Checking password…' : 'Waiting for the remote side to accept…');
+  signaling.send({ type: 'connect', targetId, password, code, ref });
 }
 
 function onOutgoingSession(msg) {
@@ -298,8 +309,23 @@ function onOutgoingSession(msg) {
     updateClipboardWatch();
     closeViewer();
     rc.log(`viewer session ${session.id} ended: ${reason}`);
+    // The remote device wants a 2FA code (or the one we sent was wrong): ask and retry.
+    if (remote && (reason === 'totp-required' || reason === 'wrong-code')) {
+      return promptTotp(reason === 'wrong-code');
+    }
     if (remote) toast(reasonText(reason), reason === 'ended' ? 'info' : 'error');
   });
+}
+
+/** Ask for the authenticator code, then reconnect to the pending device with it. */
+function promptTotp(wasWrong = false) {
+  const pending = state.pendingConnect;
+  if (!pending) return;
+  $('totp-error').textContent = wasWrong ? 'That code was not accepted. Try the current one.' : '';
+  $('totp-error').hidden = !wasWrong;
+  $('totp-input').value = '';
+  $('totp-modal').showModal();
+  setTimeout(() => $('totp-input').focus(), 50);
 }
 
 function openViewer(targetId, text) {
@@ -647,6 +673,14 @@ function renderSystemSettings() {
   $('unattended-on').hidden = !s.unattendedEnabled;
   $('set-unattended').value = '';
 
+  // Two-factor: only offered once an unattended password exists.
+  $('twofa-block').hidden = !s.unattendedEnabled;
+  $('twofa-setup').hidden = true;
+  $('twofa-toggle').textContent = s.twofaEnabled ? 'Turn off' : 'Enable';
+  $('twofa-desc').textContent = s.twofaEnabled
+    ? '● On — unattended connections require a code from your authenticator app.'
+    : 'Require a code from your authenticator app for unattended connections.';
+
   $('trusted-section').hidden = s.trusted.length === 0;
   $('trusted-list').replaceChildren(
     ...s.trusted.map((d) => {
@@ -694,9 +728,139 @@ function bindSystemSettings() {
     renderSystemSettings();
     toast('Unattended access is off.');
   });
+
+  // ---- two-factor
+  $('twofa-toggle').addEventListener('click', async () => {
+    if (state.system.twofaEnabled) {
+      state.system = await rc.twofa.disable();
+      renderSystemSettings();
+      toast('Two-factor authentication turned off.');
+      return;
+    }
+    const res = await rc.twofa.begin();
+    if (res.error) return toast(res.error, 'error');
+    $('twofa-qr').src = res.qr;
+    $('twofa-secret').textContent = res.secret.replace(/(.{4})/g, '$1 ').trim();
+    $('twofa-code').value = '';
+    $('twofa-setup-error').hidden = true;
+    $('twofa-setup').hidden = false;
+    setTimeout(() => $('twofa-code').focus(), 50);
+  });
+  const confirmTwofa = async () => {
+    const res = await rc.twofa.enable($('twofa-code').value.replace(/\D/g, ''));
+    if (res.error) {
+      $('twofa-setup-error').textContent = res.error;
+      $('twofa-setup-error').hidden = false;
+      return;
+    }
+    state.system = res;
+    renderSystemSettings();
+    toast('Two-factor authentication is on.', 'ok');
+  };
+  $('twofa-confirm').addEventListener('click', confirmTwofa);
+  $('twofa-code').addEventListener('keydown', (e) => e.key === 'Enter' && (e.preventDefault(), confirmTwofa()));
+  $('twofa-cancel').addEventListener('click', () => ($('twofa-setup').hidden = true));
 }
 
 const escapeText = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
+// ---------------------------------------------------------------- address book
+
+async function refreshAddressBook() {
+  state.addressBook = await rc.addressBook.get();
+  renderAddressBook();
+}
+
+function renderAddressBook() {
+  const list = $('addressbook');
+  const book = state.addressBook ?? [];
+  $('addressbook-empty').hidden = book.length > 0;
+  list.replaceChildren(
+    ...book.map((d) => {
+      const li = document.createElement('li');
+      li.className = 'addr-item';
+
+      const connect = document.createElement('button');
+      connect.className = 'addr-connect';
+      connect.title = 'Connect';
+      const name = document.createElement('span');
+      name.className = 'addr-name';
+      name.textContent = d.name;
+      const sub = document.createElement('span');
+      sub.className = 'addr-sub';
+      sub.textContent = `${formatId(d.id)}${d.hasPassword ? ' · saved password' : ''}`;
+      connect.append(name, sub);
+      connect.addEventListener('click', async () => {
+        const password = d.hasPassword ? await rc.addressBook.password(d.id) : '';
+        connectTo(d.id, password);
+      });
+
+      const edit = document.createElement('button');
+      edit.className = 'addr-edit';
+      edit.textContent = 'Edit';
+      edit.addEventListener('click', () => openAddrModal(d));
+
+      const remove = document.createElement('button');
+      remove.className = 'addr-remove';
+      remove.textContent = 'Remove';
+      remove.addEventListener('click', async () => {
+        state.addressBook = await rc.addressBook.remove(d.id);
+        renderAddressBook();
+      });
+
+      li.append(connect, edit, remove);
+      return li;
+    }),
+  );
+}
+
+function openAddrModal(entry = null) {
+  $('addr-title').textContent = entry ? 'Edit device' : 'Add device';
+  $('addr-name').value = entry?.name ?? '';
+  $('addr-id').value = entry ? formatId(entry.id) : $('remote-id').value;
+  $('addr-id').disabled = Boolean(entry); // id is the key; change by removing + re-adding
+  $('addr-password').value = '';
+  $('addr-password').placeholder = entry?.hasPassword ? 'Saved — leave blank to keep' : 'Saved for one-click connect';
+  $('addr-error').hidden = true;
+  $('addr-modal').showModal();
+}
+
+function bindAddressBook() {
+  $('addr-add').addEventListener('click', () => openAddrModal());
+  $('addr-id').addEventListener('input', (e) => (e.target.value = formatId(e.target.value.replace(/\D/g, '').slice(0, 9))));
+  $('addr-cancel').addEventListener('click', () => $('addr-modal').close());
+  $('addr-form').addEventListener('submit', async (e) => {
+    const id = $('addr-id').value.replace(/\D/g, '');
+    const entry = { id, name: $('addr-name').value.trim(), password: $('addr-password').value };
+    const res = await rc.addressBook.save(entry);
+    if (res.error) {
+      e.preventDefault();
+      $('addr-error').textContent = res.error;
+      $('addr-error').hidden = false;
+      return;
+    }
+    state.addressBook = res;
+    renderAddressBook();
+  });
+}
+
+function bindTotpModal() {
+  $('totp-cancel').addEventListener('click', () => {
+    $('totp-modal').close();
+    state.pendingConnect = null;
+  });
+  $('totp-form').addEventListener('submit', (e) => {
+    const code = $('totp-input').value.replace(/\D/g, '');
+    if (code.length !== 6) {
+      e.preventDefault();
+      $('totp-error').textContent = 'Enter the 6-digit code.';
+      $('totp-error').hidden = false;
+      return;
+    }
+    const pending = state.pendingConnect;
+    if (pending) connectTo(pending.targetId, pending.password, code);
+  });
+}
 
 function renderRecent() {
   const list = $('recent');

@@ -6,7 +6,7 @@ import { safeStorage } from 'electron';
 // password hash, trusted devices, tray preferences) are only changed by dedicated
 // main-process handlers, never directly by the renderer.
 const EDITABLE = ['serverUrl', 'deviceName', 'deviceId', 'deviceToken', 'recent'];
-const INTERNAL = ['unattended', 'trusted', 'closeToTray', 'trayNoticeShown'];
+const INTERNAL = ['unattended', 'twofa', 'trusted', 'addressBook', 'closeToTray', 'trayNoticeShown'];
 
 /**
  * Small JSON settings file in the profile's userData directory. The device token

@@ -95,6 +95,15 @@
         </form>
 
         <div class="recent">
+          <div class="field-label addressbook-head">
+            <span>Address book</span>
+            <button id="addr-add" class="btn btn-ghost btn-sm" type="button">+ Add device</button>
+          </div>
+          <ul id="addressbook" class="addr-list"></ul>
+          <p id="addressbook-empty" class="muted small">Save devices to connect in one click.</p>
+        </div>
+
+        <div class="recent">
           <div class="field-label">Recent</div>
           <ul id="recent" class="recent-list"></ul>
           <p id="recent-empty" class="muted small">No recent connections.</p>
@@ -184,6 +193,33 @@
             <button id="unattended-change" class="btn btn-ghost btn-sm" type="button">Change</button>
             <button id="unattended-disable" class="btn btn-ghost btn-sm" type="button">Turn off</button>
           </div>
+
+          <div id="twofa-block" class="twofa-block" hidden>
+            <div class="twofa-row">
+              <div>
+                <strong>Two-factor authentication</strong>
+                <p class="muted small" id="twofa-desc">Require a code from your authenticator app for unattended connections.</p>
+              </div>
+              <button id="twofa-toggle" class="btn btn-ghost btn-sm" type="button">Enable</button>
+            </div>
+            <div id="twofa-setup" hidden>
+              <p class="muted small">Scan this with Google Authenticator, Authy, or similar — or enter the key manually:</p>
+              <div class="twofa-setup-grid">
+                <img id="twofa-qr" class="twofa-qr" alt="2FA QR code" />
+                <div>
+                  <div class="field-label">Setup key</div>
+                  <code id="twofa-secret" class="twofa-secret"></code>
+                  <label class="field-label" for="twofa-code">Enter the 6-digit code to confirm</label>
+                  <input id="twofa-code" class="input" inputmode="numeric" maxlength="6" placeholder="123456" autocomplete="one-time-code" />
+                  <p id="twofa-setup-error" class="warning" hidden></p>
+                  <div class="value-row">
+                    <button id="twofa-confirm" class="btn btn-primary btn-sm" type="button">Confirm &amp; enable</button>
+                    <button id="twofa-cancel" class="btn btn-ghost btn-sm" type="button">Cancel</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div class="settings-section" id="trusted-section" hidden>
@@ -198,6 +234,36 @@
         <div class="modal-actions">
           <button id="settings-cancel" class="btn btn-ghost" type="button">Close</button>
           <button class="btn btn-primary" type="submit" value="save">Save server &amp; name</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="addr-modal" class="modal">
+      <form id="addr-form" method="dialog">
+        <h3 id="addr-title">Add device</h3>
+        <label class="field-label" for="addr-name">Name</label>
+        <input id="addr-name" class="input" maxlength="64" placeholder="e.g. Office PC" required />
+        <label class="field-label" for="addr-id">Device ID</label>
+        <input id="addr-id" class="input input-id" inputmode="numeric" maxlength="11" placeholder="123 456 789" required />
+        <label class="field-label" for="addr-password">Password <span class="muted">(optional, saved securely)</span></label>
+        <input id="addr-password" class="input" type="password" autocomplete="off" placeholder="Saved for one-click connect" />
+        <p id="addr-error" class="warning" hidden></p>
+        <div class="modal-actions">
+          <button id="addr-cancel" class="btn btn-ghost" type="button">Cancel</button>
+          <button class="btn btn-primary" type="submit" value="save">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="totp-modal" class="modal">
+      <form id="totp-form" method="dialog">
+        <h3>Two-factor code</h3>
+        <p class="muted small">This device is protected by two-factor authentication. Enter the current 6-digit code from your authenticator app.</p>
+        <input id="totp-input" class="input input-id" inputmode="numeric" maxlength="6" placeholder="123456" autocomplete="one-time-code" />
+        <p id="totp-error" class="warning" hidden></p>
+        <div class="modal-actions">
+          <button id="totp-cancel" class="btn btn-ghost" type="button">Cancel</button>
+          <button class="btn btn-primary" type="submit" value="ok">Connect</button>
         </div>
       </form>
     </dialog>

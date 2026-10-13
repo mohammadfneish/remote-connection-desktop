@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, Menu, Notification, screen, session, shell } from 'electron';
+import { app, BrowserWindow, desktopCapturer, ipcMain, Menu, Notification, safeStorage, screen, session, shell } from 'electron';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,11 +9,29 @@ import { Updater } from './updater.js';
 import { ClipboardSync } from './clipboard-sync.js';
 import { FileReceiver } from './file-receiver.js';
 import { addTrusted, hashPassword, validatePassword, verifyPassword } from './access.js';
+import { generateSecret, otpauthUrl, verifyTotp } from './twofa.js';
 import { HIDDEN_ARG, setStartAtLogin, startAtLogin } from './autostart.js';
 import { AppTray } from './tray.js';
 
+const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const pkg = createRequire(import.meta.url)('../../package.json');
+const pkg = require('../../package.json');
+const QRCode = require('qrcode');
+
+// Encrypt/decrypt a secret for on-disk storage using the OS keychain when available.
+const encryptSecret = (text) => (safeStorage.isEncryptionAvailable() ? `enc:${safeStorage.encryptString(text).toString('base64')}` : `raw:${Buffer.from(text).toString('base64')}`);
+const decryptSecret = (stored) => {
+  if (typeof stored !== 'string') return '';
+  if (stored.startsWith('enc:')) {
+    try {
+      return safeStorage.decryptString(Buffer.from(stored.slice(4), 'base64'));
+    } catch {
+      return '';
+    }
+  }
+  if (stored.startsWith('raw:')) return Buffer.from(stored.slice(4), 'base64').toString();
+  return '';
+};
 
 // Command line: --profile=<name> --server=<ws url> --connect=<id> --password=<pw> --devtools
 const args = Object.fromEntries(
@@ -204,6 +222,7 @@ if (!app.requestSingleInstanceLock()) {
       startAtLogin: startAtLogin(),
       closeToTray: config.internal('closeToTray') !== false,
       unattendedEnabled: config.get().unattendedEnabled,
+      twofaEnabled: Boolean(config.internal('twofa')?.secret),
       trusted: config.internal('trusted') ?? [],
     });
     ipcMain.handle('system:get', () => systemState());
@@ -227,11 +246,79 @@ if (!app.requestSingleInstanceLock()) {
       return systemState();
     });
     ipcMain.handle('unattended:disable', (e) => {
-      if (fromWindow(e)) config.setInternal({ unattended: null });
+      // Turning off the password also turns off its second factor.
+      if (fromWindow(e)) config.setInternal({ unattended: null, twofa: null });
       tray?.update({ unattended: false });
       return systemState();
     });
-    ipcMain.handle('unattended:verify', (e, password) => fromWindow(e) && verifyPassword(password, config.internal('unattended')));
+
+    /**
+     * Host-side check of an incoming unattended request. Verifies the password and, when
+     * two-factor is enabled, the current authenticator code.
+     * @returns { ok, needCode?, badCode? }
+     */
+    ipcMain.handle('unattended:check', (e, password, code) => {
+      if (!fromWindow(e)) return { ok: false };
+      if (!verifyPassword(password, config.internal('unattended'))) return { ok: false };
+      const secretStored = config.internal('twofa')?.secret;
+      if (!secretStored) return { ok: true };
+      const secret = decryptSecret(secretStored);
+      if (!code) return { ok: false, needCode: true };
+      if (secret && verifyTotp(secret, code)) return { ok: true };
+      return { ok: false, needCode: true, badCode: true };
+    });
+
+    // Two-factor (TOTP) on top of the unattended password. The secret is generated here,
+    // shown once as a QR + key for the user's authenticator app, and only persisted after
+    // they confirm a valid code.
+    let pendingTotpSecret = null;
+    ipcMain.handle('twofa:begin', async (e) => {
+      if (!fromWindow(e)) return { error: 'not allowed' };
+      if (!config.get().unattendedEnabled) return { error: 'Set an unattended password first.' };
+      pendingTotpSecret = generateSecret();
+      const url = otpauthUrl({ secret: pendingTotpSecret, account: config.get().deviceId ?? 'device' });
+      const qr = await QRCode.toDataURL(url, { margin: 1, width: 220, errorCorrectionLevel: 'M' });
+      return { secret: pendingTotpSecret, qr };
+    });
+    ipcMain.handle('twofa:enable', (e, code) => {
+      if (!fromWindow(e)) return { error: 'not allowed' };
+      if (!pendingTotpSecret) return { error: 'Start the setup again.' };
+      if (!verifyTotp(pendingTotpSecret, code)) return { error: 'That code is not valid. Check your authenticator app and try again.' };
+      config.setInternal({ twofa: { secret: encryptSecret(pendingTotpSecret) } });
+      pendingTotpSecret = null;
+      return systemState();
+    });
+    ipcMain.handle('twofa:disable', (e) => {
+      if (fromWindow(e)) config.setInternal({ twofa: null });
+      pendingTotpSecret = null;
+      return systemState();
+    });
+
+    // Address book: devices the user saves with a friendly name and, optionally, the remote
+    // device's password (encrypted at rest) for one-click connect.
+    const publicBook = () =>
+      (config.internal('addressBook') ?? []).map((d) => ({ id: d.id, name: d.name, hasPassword: Boolean(d.pw) }));
+    ipcMain.handle('addressbook:get', () => publicBook());
+    ipcMain.handle('addressbook:save', (e, entry) => {
+      if (!fromWindow(e)) return publicBook();
+      const id = String(entry?.id ?? '').replace(/\D/g, '');
+      if (!/^\d{9}$/.test(id)) return { error: 'Enter a valid 9-digit ID.' };
+      const rec = { id, name: String(entry?.name ?? '').slice(0, 64) || `Device ${id}` };
+      if (entry?.password) rec.pw = encryptSecret(String(entry.password).slice(0, 128));
+      const list = [rec, ...(config.internal('addressBook') ?? []).filter((d) => d.id !== id)].slice(0, 100);
+      config.setInternal({ addressBook: list });
+      return publicBook();
+    });
+    ipcMain.handle('addressbook:remove', (e, id) => {
+      if (fromWindow(e)) config.setInternal({ addressBook: (config.internal('addressBook') ?? []).filter((d) => d.id !== String(id)) });
+      return publicBook();
+    });
+    // The saved password for an entry, for the renderer to use in the connect request.
+    ipcMain.handle('addressbook:password', (e, id) => {
+      if (!fromWindow(e)) return '';
+      const entry = (config.internal('addressBook') ?? []).find((d) => d.id === String(id));
+      return entry?.pw ? decryptSecret(entry.pw) : '';
+    });
 
     // Devices the user chose to trust ("always allow"), so an approved helper isn't
     // re-prompted each time. Removable in Settings.
@@ -244,15 +331,16 @@ if (!app.requestSingleInstanceLock()) {
       return systemState();
     });
 
-    // Someone connected to this computer. Always surface it: bring the window up and notify,
-    // so a session is never silent to whoever is at the machine.
+    // Someone connected to this computer. Surface it without covering the desktop — the
+    // viewer needs to see and use that screen — so we notify, update the tray, and flash the
+    // taskbar instead of raising the window over everything.
     ipcMain.on('session:hosting', (e, info) => {
       if (!fromWindow(e)) return;
       const label = info?.active ? String(info.peer ?? 'Someone').slice(0, 80) : null;
       tray?.update({ connectedTo: label });
       if (label) {
-        showWindow({ focus: false });
-        notify(`${label} is now connected to this computer. You can disconnect at any time.`);
+        notify(`${label} is now connected to this computer. Open Remote Connection from the tray to disconnect.`);
+        if (win && !win.isDestroyed() && !win.isFocused()) win.flashFrame(true);
       }
     });
 

@@ -711,6 +711,131 @@ h2 {
   cursor: pointer;
 }
 
+.addressbook-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.addr-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.addr-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.addr-item:hover {
+  background: var(--surface-2);
+}
+
+.addr-connect {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.addr-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.addr-sub {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.addr-edit,
+.addr-remove {
+  flex: none;
+  padding: 4px 6px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.addr-edit {
+  color: var(--accent-hover);
+}
+
+.addr-remove {
+  color: var(--danger);
+}
+
+.twofa-block {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+}
+
+.twofa-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.twofa-row p {
+  margin: 4px 0 0;
+}
+
+.twofa-setup {
+  margin-top: 14px;
+}
+
+.twofa-setup-grid {
+  display: flex;
+  gap: 16px;
+  margin-top: 10px;
+}
+
+.twofa-qr {
+  width: 180px;
+  height: 180px;
+  flex: none;
+  border-radius: 8px;
+  background: #fff;
+  padding: 6px;
+}
+
+.twofa-secret {
+  display: block;
+  margin: 4px 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font: 600 14px ui-monospace, Consolas, monospace;
+  letter-spacing: 1px;
+  user-select: all;
+}
+
 #incoming-text {
   font-size: 15px;
 }
