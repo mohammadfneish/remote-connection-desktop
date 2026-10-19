@@ -57,6 +57,8 @@ async function init() {
   bindAddressBook();
   bindTotpModal();
   refreshAddressBook();
+  // "Disconnect session" from the tray ends the connection someone has to this computer.
+  rc.onHostDisconnect(() => state.host?.end('ended'));
 
   const input = await rc.inputStatus();
   if (!input.available) {

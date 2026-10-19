@@ -8,10 +8,10 @@ const formatId = (id) => String(id ?? '').replace(/(\d{3})(?=\d)/g, '$1 ');
  * says so plainly, so a session is never hidden from whoever is sitting there.
  */
 export class AppTray {
-  constructor({ iconPath, onOpen, onCheckUpdates, onQuit }) {
+  constructor({ iconPath, onOpen, onCheckUpdates, onDisconnect, onQuit }) {
     const image = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16, quality: 'best' });
     this.tray = new Tray(image);
-    this.actions = { onOpen, onCheckUpdates, onQuit };
+    this.actions = { onOpen, onCheckUpdates, onDisconnect, onQuit };
     this.status = { deviceId: null, connectedTo: null, unattended: false };
     this.tray.on('click', () => onOpen());
     this.render();
@@ -32,8 +32,12 @@ export class AppTray {
     this.tray.setContextMenu(
       Menu.buildFromTemplate([
         { label: deviceId ? `Your ID: ${formatId(deviceId)}` : 'Connecting…', enabled: false },
-        ...(connectedTo ? [{ label: `● Connected: ${connectedTo}`, enabled: false }] : []),
-        { label: unattended ? 'Unattended access: on' : 'Unattended access: off', enabled: false },
+        ...(connectedTo
+          ? [
+              { label: `● Connected: ${connectedTo}`, enabled: false },
+              { label: 'Disconnect session', click: this.actions.onDisconnect },
+            ]
+          : [{ label: unattended ? 'Unattended access: on' : 'Unattended access: off', enabled: false }]),
         { type: 'separator' },
         { label: 'Open Remote Connection', click: this.actions.onOpen },
         { label: 'Check for updates', click: this.actions.onCheckUpdates },

@@ -70,6 +70,12 @@ contextBridge.exposeInMainWorld('rc', {
 
   // Tell the main process a remote session is (in)active, so it can surface it to the user.
   hosting: (active, peer) => ipcRenderer.send('session:hosting', { active: Boolean(active), peer }),
+  // The user chose "Disconnect session" from the tray.
+  onHostDisconnect: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('host:disconnect', listener);
+    return () => ipcRenderer.removeListener('host:disconnect', listener);
+  },
 
   updates: {
     getState: () => ipcRenderer.invoke('update:get-state'),

@@ -1,7 +1,7 @@
 {
   "name": "@rc/desktop",
   "productName": "Remote Connection",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "license": "MIT",
   "private": true,
   "description": "Remote desktop client (host + viewer)",

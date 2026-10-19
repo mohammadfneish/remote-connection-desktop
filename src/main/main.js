@@ -109,6 +109,8 @@ if (!app.requestSingleInstanceLock()) {
         const state = await updater.check({ manual: true });
         if (state.status === 'up-to-date') notify(`You're up to date (version ${state.current}).`);
       },
+      // End the session someone has to this computer, straight from the tray.
+      onDisconnect: () => win && !win.isDestroyed() && win.webContents.send('host:disconnect'),
       onQuit: () => app.quit(),
     });
     tray.update({ deviceId: config.get().deviceId, unattended: config.get().unattendedEnabled });
@@ -339,8 +341,12 @@ if (!app.requestSingleInstanceLock()) {
       const label = info?.active ? String(info.peer ?? 'Someone').slice(0, 80) : null;
       tray?.update({ connectedTo: label });
       if (label) {
-        notify(`${label} is now connected to this computer. Open Remote Connection from the tray to disconnect.`);
-        if (win && !win.isDestroyed() && !win.isFocused()) win.flashFrame(true);
+        // Get the window out of the way so it doesn't cover the desktop the viewer is using.
+        // The viewer sees a clean screen; the host controls the session from the tray (which
+        // now shows a Disconnect item) and gets a notification. Screen capture continues while
+        // minimized.
+        if (win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()) win.minimize();
+        notify(`${label} is now connected to this computer. Right-click the tray icon to disconnect.`);
       }
     });
 
