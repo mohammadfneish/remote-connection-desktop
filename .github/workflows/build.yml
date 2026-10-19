@@ -1,0 +1,91 @@
+# Builds the Remote Connection desktop installers and, once SignPath is configured, signs the
+# Windows installer. This is the open-source client repo; it does not publish to the download
+# CDN (that happens from the private project).
+#
+# Run it from GitHub: Actions -> Build -> Run workflow. (Manual only, by design.)
+#
+# SignPath signing (after approval) needs:
+#   - secret   SIGNPATH_API_TOKEN         (from SignPath)
+#   - variable SIGNPATH_ORGANIZATION_ID   (from SignPath; signing is skipped while it's empty)
+#   and the project-slug / signing-policy-slug below set to match your SignPath project.
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: Platforms to build
+        type: choice
+        default: windows
+        options: [all, windows, mac, linux]
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - id: plan
+        shell: bash
+        run: |
+          all='[{"os":"windows","runner":"windows-latest","flag":"--win"},{"os":"mac","runner":"macos-latest","flag":"--mac"},{"os":"linux","runner":"ubuntu-latest","flag":"--linux"}]'
+          if [ "${{ inputs.platforms }}" = all ]; then matrix=$all
+          else matrix=$(echo "$all" | jq -c --arg os "${{ inputs.platforms }}" 'map(select(.os == $os))'); fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    env:
+      # Build unsigned; the Windows installer is signed by SignPath below.
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+
+      - name: Build installers
+        run: npm run dist -- ${{ matrix.flag }}
+
+      - uses: actions/upload-artifact@v4
+        id: upload
+        with:
+          name: installers-${{ matrix.os }}
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.AppImage
+            dist/*.deb
+          if-no-files-found: error
+
+      # Sign the Windows installer via SignPath. Skipped until SIGNPATH_ORGANIZATION_ID is set,
+      # so the build works before SignPath approval. The signed installer is re-uploaded.
+      - name: Sign Windows installer (SignPath)
+        if: ${{ matrix.os == 'windows' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: remote-connection-desktop
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: dist-signed
+
+      - name: Upload signed installer
+        if: ${{ matrix.os == 'windows' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-windows-signed
+          path: dist-signed/*.exe
+          if-no-files-found: error
